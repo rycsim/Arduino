@@ -1,0 +1,189 @@
+#include <Wire.h>
+#include <avr/sleep.h>
+#include <avr/wdt.h>   
+
+#define DS3231_I2C_ADDRESS 0x68
+
+const int PinSeuilLumiere=2;   //Broche Numérique mesure d'éclairement
+int eclaire =0;    //0 ou 1 (0=éclairé>seuil, 1=ombre<seuil)
+const int pompe1 = 11;
+const int pompe2 = 12;
+
+const int switchPin = 7;
+int switchState = 1;
+
+const int TpsPompe=20000; // réglage du temps de montée  
+const int TpsReverification=5000; 
+
+int IsJour;
+int IsJourLast=HIGH; //Mise en route il fait jour  
+
+ISR(WDT_vect) 
+ {
+ wdt_disable();  // disable watchdog
+ }
+
+void myWatchdogEnable(const byte interval) 
+ {  
+ MCUSR = 0;                          // reset various flags
+ WDTCSR |= 0b00011000;               // see docs, set WDCE, WDE
+ WDTCSR =  0b01000000 | interval;    // set WDIE, and appropriate delay
+
+ wdt_reset();
+ set_sleep_mode (SLEEP_MODE_PWR_DOWN);  
+ sleep_mode();            // now goes to Sleep and waits for the interrupt
+ } 
+
+byte bcdToDec(byte val)   // Convert binary coded decimal to normal decimal numbers
+{
+  return( (val/16*10) + (val%16) );
+}
+
+void readDS3231time(byte *second, byte *minute, byte *hour)
+{
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  Wire.write(0); // set DS3231 register pointer to 00h
+  Wire.endTransmission();
+  Wire.requestFrom(DS3231_I2C_ADDRESS, 7);
+  *second = bcdToDec(Wire.read() & 0x7f);
+  *minute = bcdToDec(Wire.read());
+  *hour = bcdToDec(Wire.read() & 0x3f);
+}
+
+int IsSunrise()
+{
+  byte second, minute, hour;
+  readDS3231time(&second, &minute, &hour);
+  if (hour>=6 && hour<=9)
+  {
+    return HIGH; 
+  }
+  else
+  {
+    return LOW;
+  }
+}
+
+int IsSunset()
+{
+  byte second, minute, hour;
+  readDS3231time(&second, &minute, &hour);
+  if (hour>=17 && hour<=22)
+  {
+    return HIGH; 
+//    Serial.print("le soleil se couche");
+  }
+  else
+  {
+    return LOW;
+  }
+}
+
+void OuvrePorte()
+{
+  digitalWrite(pompe1,HIGH);
+  delay(TpsPompe);
+  digitalWrite(pompe1,LOW);  
+}
+
+void FermePorte()
+{
+  digitalWrite(pompe2,HIGH);
+  delay(TpsPompe);
+  digitalWrite(pompe2,LOW); 
+}
+
+void displayTime()
+{
+  byte second, minute, hour;
+  readDS3231time(&second, &minute, &hour);
+  Serial.print(hour, DEC);
+  Serial.print(":");
+  if (minute<10)
+  {
+    Serial.print("0");
+  }
+  Serial.print(minute, DEC);
+  Serial.print(":");
+  if (second<10)
+  {
+    Serial.print("0");
+  }
+  Serial.println(second, DEC);
+}
+
+void stop(){  
+  digitalWrite(pompe1,LOW);
+  digitalWrite(pompe2,LOW); 
+ }  
+
+void setup() {
+    Wire.begin();
+  //  Serial.begin(9600);  //Connection série à 9600 baud
+    pinMode(PinSeuilLumiere, INPUT);  //pin 2 en entrée numérique
+    //switch
+    pinMode(switchPin, INPUT);
+    digitalWrite(switchPin, HIGH);
+
+    pinMode(pompe1, OUTPUT);
+    pinMode(pompe2, OUTPUT);
+
+    // au branchement lance l'ouverture  
+    // COndition initiales :   
+    // - faire jour  
+  
+    switchState = digitalRead(switchPin);
+    if (switchState == 1 && digitalRead(PinSeuilLumiere)==1)
+    {
+      OuvrePorte();
+      switchState = digitalRead(switchPin);  
+    }
+    if (switchState == 0 && digitalRead(PinSeuilLumiere)==0)
+    {
+      FermePorte();
+      switchState = digitalRead(switchPin);  
+    }
+}
+
+void loop()
+{   
+  int i;
+  for (i = 0; i <=38; i++)
+  {  
+    myWatchdogEnable (0b100001);
+    //Serial.println("Je fais dodo 8sec");       
+  }
+//    displayTime();
+  switchState = digitalRead(switchPin); 
+   
+  if (switchState == 0  && IsSunset())         //porte ouverte
+  {
+  IsJour=digitalRead(PinSeuilLumiere);
+    if (IsJourLast != IsJour)  
+    {  
+    delay(60000); // attends 60 secondes
+    IsJour=digitalRead(PinSeuilLumiere);
+      if (IsJourLast != IsJour )  
+      {  
+      IsJourLast=IsJour;  //après confirmation, il fait nuit, on ferme
+      delay(5500000); // attendre 40 minutes et demi puis on ferme 
+      FermePorte();   
+      }    
+    }        
+  }
+
+  if (switchState == 1  && IsSunrise() )         //porte fermée
+  {
+  IsJour=digitalRead(PinSeuilLumiere);
+    if (IsJourLast != IsJour )  
+    {  
+    delay(60000); 
+    IsJour=digitalRead(PinSeuilLumiere);
+      if (IsJourLast != IsJour)  
+      {  
+      IsJourLast=IsJour;  //après confirmation, il fait nuit, on ferme
+      FermePorte();   
+      }    
+    }  
+  }
+}     
