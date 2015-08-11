@@ -1,17 +1,14 @@
-
 #include <math.h>
 #include <Time.h>
 #include <Wire.h>
 #include <avr/sleep.h>
 #include <avr/wdt.h>
 
-
 #define DS3231_I2C_ADDRESS 0x68
 
 #define timeZoneOffset 1 // Time zone offset (hr), zones west of GMT are negative
 #define julianUnixEpoch  2440587.5 // julian days to start of unix epoch
 //#define myUnixDate 1352030400 // used for testing 2012-11-04 12:00
-//#define myUnixDate 1439294400 // used for testing 
 #define lat 44.14  // latitude, values north of equator are positive
 #define lon 0.2 // longitude, values west of GMT are negative
 
@@ -20,7 +17,7 @@ const int pompe2 = 12;
 const int  BtnFerme = 4; 
 const int  BtnOuvre = 5;
 
-const int TpsAttentePouleRentre = 2400000;  // 1800 sec 30min tps en sec
+const int TpsAttentePouleRentre = 2400000;  //  30min
 const int TpsPompe=440000;
 boolean FlagOpen=true;
 int BtnFermeState, BtnOuvreState;
@@ -65,7 +62,6 @@ void FermePorte()
     FlagOpen=false;
 } 
   
-
 void setup () {
     Wire.begin();
     Serial.begin(115200); // Set serial port speed
@@ -84,7 +80,6 @@ void loop() {
   // Initialize a Time value (seconds since 1970-1-1)
   time_t MySunRiseTime, MySunSetTime, NowTime;
 
-
   if ( (BtnFermeState == LOW) && (BtnOuvreState == LOW))
   {   
     GetSunRiseSunSetTime(&MySunRiseTime, &MySunSetTime);
@@ -94,7 +89,6 @@ void loop() {
       {   
         Serial.println("il faut se reveiller");         
         OuvrePorte();
-
       }   
       if ((FlagOpen==true) && (NowTime>=MySunSetTime))   
       { 
@@ -120,7 +114,6 @@ void loop() {
     OuvrePorte();
   }
 }  // end of main loop
-
 
 // Utility function to print time and date nicely
 void printDateTime(time_t t){
@@ -239,7 +232,7 @@ void GetSunRiseSunSetTime(time_t *SunRiseTime,time_t *SunSetTime)
   Serial.println(*SunRiseTime);
   //printDateTime(*SunRiseTime);
 
- double Sunset = SolarNoon + HAS * 4/1440;
+  double Sunset = SolarNoon + HAS * 4/1440;
   Sunset = unixDays + Sunset;
   Sunset = Sunset + ((double)timeZoneOffset / 24);
   Sunset = Sunset * 86400;
@@ -248,5 +241,4 @@ void GetSunRiseSunSetTime(time_t *SunRiseTime,time_t *SunSetTime)
   *SunSetTime = Sunset;
   Serial.print("Sunset time: ");Serial.println(*SunSetTime);
   //printDateTime(*SunSetTime);  
-
 }
