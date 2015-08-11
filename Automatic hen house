@@ -1,26 +1,38 @@
+
+#include <math.h>
+#include <Time.h>
 #include <Wire.h>
 #include <avr/sleep.h>
-#include <avr/wdt.h>   
+#include <avr/wdt.h>
+
 
 #define DS3231_I2C_ADDRESS 0x68
 
-const int PinSeuilLumiere=2;   //Broche Numérique mesure d'éclairement
-int eclaire =0;    //0 ou 1 (0=éclairé>seuil, 1=ombre<seuil)
+#define timeZoneOffset 1 // Time zone offset (hr), zones west of GMT are negative
+#define julianUnixEpoch  2440587.5 // julian days to start of unix epoch
+//#define myUnixDate 1352030400 // used for testing 2012-11-04 12:00
+//#define myUnixDate 1439294400 // used for testing 
+#define lat 44.14  // latitude, values north of equator are positive
+#define lon 0.2 // longitude, values west of GMT are negative
+
 const int pompe1 = 11;
 const int pompe2 = 12;
+const int  BtnFerme = 4; 
+const int  BtnOuvre = 5;
 
-const int switchPin = 7;
-int switchState = 1;
+const int TpsAttentePouleRentre = 2400000;  // 1800 sec 30min tps en sec
+const int TpsPompe=440000;
+boolean FlagOpen=true;
+int BtnFermeState, BtnOuvreState;
 
-const int TpsPompe=20000; // réglage du temps de montée  
-const int TpsReverification=5000; 
-
-int IsJour;
-int IsJourLast=HIGH; //Mise en route il fait jour  
-
+  // au branchement lance l'ouverture   
+  // COndition initiales :    
+  // - faire jour   
+  //- Porte poulailler ouverte   
+  
 ISR(WDT_vect) 
  {
- wdt_disable();  // disable watchdog
+ wdt_disable(); 
  }
 
 void myWatchdogEnable(const byte interval) 
@@ -34,156 +46,207 @@ void myWatchdogEnable(const byte interval)
  sleep_mode();            // now goes to Sleep and waits for the interrupt
  } 
 
-byte bcdToDec(byte val)   // Convert binary coded decimal to normal decimal numbers
-{
-  return( (val/16*10) + (val%16) );
-}
-
-void readDS3231time(byte *second, byte *minute, byte *hour)
-{
-  Wire.beginTransmission(DS3231_I2C_ADDRESS);
-  Wire.write(0); // set DS3231 register pointer to 00h
-  Wire.endTransmission();
-  Wire.requestFrom(DS3231_I2C_ADDRESS, 7);
-  *second = bcdToDec(Wire.read() & 0x7f);
-  *minute = bcdToDec(Wire.read());
-  *hour = bcdToDec(Wire.read() & 0x3f);
-}
-
-int IsSunrise()
-{
-  byte second, minute, hour;
-  readDS3231time(&second, &minute, &hour);
-  if (hour>=6 && hour<=9)
-  {
-    return HIGH; 
-  }
-  else
-  {
-    return LOW;
-  }
-}
-
-int IsSunset()
-{
-  byte second, minute, hour;
-  readDS3231time(&second, &minute, &hour);
-  if (hour>=17 && hour<=22)
-  {
-    return HIGH; 
-//    Serial.print("le soleil se couche");
-  }
-  else
-  {
-    return LOW;
-  }
-}
 
 void OuvrePorte()
 {
-  digitalWrite(pompe1,HIGH);
-  delay(TpsPompe);
-  digitalWrite(pompe1,LOW);  
+    digitalWrite(pompe1,HIGH);
+    Serial.println("Je pompe pour ouvrir ");
+    delay(440000);
+    digitalWrite(pompe1,LOW);
+    FlagOpen=true;  
 }
 
 void FermePorte()
 {
-  digitalWrite(pompe2,HIGH);
-  delay(TpsPompe);
-  digitalWrite(pompe2,LOW); 
-}
+    digitalWrite(pompe2,HIGH);
+     Serial.println("Je pompe pour fermer");
+    delay(440000);  //7min20s
+    digitalWrite(pompe2,LOW);
+    FlagOpen=false;
+} 
+  
 
-void displayTime()
-{
-  byte second, minute, hour;
-  readDS3231time(&second, &minute, &hour);
-  Serial.print(hour, DEC);
-  Serial.print(":");
-  if (minute<10)
-  {
-    Serial.print("0");
-  }
-  Serial.print(minute, DEC);
-  Serial.print(":");
-  if (second<10)
-  {
-    Serial.print("0");
-  }
-  Serial.println(second, DEC);
-}
-
-void stop(){  
-  digitalWrite(pompe1,LOW);
-  digitalWrite(pompe2,LOW); 
- }  
-
-void setup() {
+void setup () {
     Wire.begin();
-  //  Serial.begin(9600);  //Connection série à 9600 baud
-    pinMode(PinSeuilLumiere, INPUT);  //pin 2 en entrée numérique
-    //switch
-    pinMode(switchPin, INPUT);
-    digitalWrite(switchPin, HIGH);
-
+    Serial.begin(115200); // Set serial port speed
+    
+    // while the serial stream is not open, do nothing:
+    //while (!Serial) ;
     pinMode(pompe1, OUTPUT);
     pinMode(pompe2, OUTPUT);
 
-    // au branchement lance l'ouverture  
-    // COndition initiales :   
-    // - faire jour  
-  
-    switchState = digitalRead(switchPin);
-    if (switchState == 1 && digitalRead(PinSeuilLumiere)==1)
-    {
-      OuvrePorte();
-      switchState = digitalRead(switchPin);  
-    }
-    if (switchState == 0 && digitalRead(PinSeuilLumiere)==0)
-    {
-      FermePorte();
-      switchState = digitalRead(switchPin);  
-    }
+    pinMode(BtnFerme, INPUT);
+    pinMode(BtnOuvre, INPUT);    
 }
 
-void loop()
-{   
+void loop() {
   int i;
-  for (i = 0; i <=38; i++)
-  {  
-    myWatchdogEnable (0b100001);
-    //Serial.println("Je fais dodo 8sec");       
-  }
-//    displayTime();
-  switchState = digitalRead(switchPin); 
-   
-  if (switchState == 0  && IsSunset())         //porte ouverte
-  {
-  IsJour=digitalRead(PinSeuilLumiere);
-    if (IsJourLast != IsJour)  
-    {  
-    delay(60000); // attends 60 secondes
-    IsJour=digitalRead(PinSeuilLumiere);
-      if (IsJourLast != IsJour )  
-      {  
-      IsJourLast=IsJour;  //après confirmation, il fait nuit, on ferme
-      delay(5500000); // attendre 40 minutes et demi puis on ferme 
-      FermePorte();   
-      }    
-    }        
-  }
+  // Initialize a Time value (seconds since 1970-1-1)
+  time_t MySunRiseTime, MySunSetTime, NowTime;
 
-  if (switchState == 1  && IsSunrise() )         //porte fermée
-  {
-  IsJour=digitalRead(PinSeuilLumiere);
-    if (IsJourLast != IsJour )  
+
+  if ( (BtnFermeState == LOW) && (BtnOuvreState == LOW))
+  {   
+    GetSunRiseSunSetTime(&MySunRiseTime, &MySunSetTime);
+    NowTime = now();
+    Serial.print("now : ");Serial.println(NowTime);
+      if ((FlagOpen==false) && (NowTime>=MySunRiseTime) && (NowTime<MySunSetTime))   
+      {   
+        Serial.println("il faut se reveiller");         
+        OuvrePorte();
+
+      }   
+      if ((FlagOpen==true) && (NowTime>=MySunSetTime))   
+      { 
+        if (NowTime < (MySunSetTime + (TpsAttentePouleRentre/1000))){delay(TpsAttentePouleRentre);}
+        Serial.println("il faut aller faire dodo");
+        FermePorte();   
+      } 
+    Serial.println("Arduino part dormir pendant 10min");
+    delay(1000);
+    for (i = 0; i <=75; i++)   
     {  
-    delay(60000); 
-    IsJour=digitalRead(PinSeuilLumiere);
-      if (IsJourLast != IsJour)  
-      {  
-      IsJourLast=IsJour;  //après confirmation, il fait nuit, on ferme
-      FermePorte();   
-      }    
-    }  
+      myWatchdogEnable (0b100001);
+    }
+    delay(1000);  
   }
-}     
+ if (BtnFermeState == HIGH)  //si bouton de fermeture et porte ouverte
+  {
+    FermePorte(); 
+  }
+  
+  if (BtnOuvreState == HIGH)    //si bouton d ouverture et porte fermé
+  {
+    OuvrePorte();
+  }
+}  // end of main loop
+
+
+// Utility function to print time and date nicely
+void printDateTime(time_t t){
+  Serial.print(year(t));
+  printDateDigits(month(t));
+  printDateDigits(day(t));
+  Serial.print(" ");
+  Serial.print(hour(t));
+  printDigits(minute(t));
+  printDigits(second(t));
+  Serial.println();
+}
+// Utility function to print month/day digits nicely
+void printDateDigits(int digits){
+  Serial.print("-");
+  if(digits < 10) Serial.print("0");
+  Serial.print(digits); 
+}
+// Utility function for time value printing
+void printDigits(int digits){
+  Serial.print(":");
+  if(digits < 10)
+    Serial.print('0');
+  Serial.print(digits);
+}
+
+byte decToBcd(byte val)
+{
+  return( (val/10*16) + (val%10) );
+}
+// Convert binary coded decimal to normal decimal numbers
+byte bcdToDec(byte val)
+{
+  return( (val/16*10) + (val%16) );
+}
+
+time_t readDS3231time()
+{
+  byte DS3231second, DS3231minute, DS3231hour, DS3231dayOfWeek, DS3231dayOfMonth, DS3231month, DS3231year;
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  Wire.write(0); // set DS3231 register pointer to 00h
+  Wire.endTransmission();
+  Wire.requestFrom(DS3231_I2C_ADDRESS, 7); 
+  DS3231second = bcdToDec(Wire.read() & 0x7f);
+  DS3231minute = bcdToDec(Wire.read());
+  DS3231hour = bcdToDec(Wire.read() & 0x3f);
+  DS3231dayOfWeek = bcdToDec(Wire.read());
+  DS3231dayOfMonth = bcdToDec(Wire.read());
+  DS3231month = bcdToDec(Wire.read());
+  DS3231year = bcdToDec(Wire.read())+2000;
+  return tmConvert_t(DS3231year,DS3231month,DS3231dayOfMonth,DS3231hour,DS3231minute,DS3231second);
+}
+
+time_t tmConvert_t(int YYYY, byte MM, byte DD, byte hh, byte mm, byte ss)
+{
+  tmElements_t tmSet;
+  tmSet.Year = YYYY - 1970;
+  tmSet.Month = MM;
+  tmSet.Day = DD;
+  tmSet.Hour = hh;
+  tmSet.Minute = mm;
+  tmSet.Second = ss;
+  return makeTime(tmSet);         //convert to time_t
+}
+
+void GetSunRiseSunSetTime(time_t *SunRiseTime,time_t *SunSetTime)
+{
+   byte DS3231second, DS3231minute, DS3231hour, DS3231dayOfWeek, DS3231dayOfMonth, DS3231month, DS3231year;
+
+  time_t myUnixDate = readDS3231time();
+  
+  //Serial.println(s_tm);
+
+  setTime(myUnixDate); // set time using Time library function
+  time_t t = now(); // store time value in t
+ /* Serial.println();
+  Serial.print("Input time: ");
+  printDateTime(t);
+  Serial.print("unixtime : ");
+  Serial.println(t);*/
+
+  double timeFracDay = ((((double)(second(t)/60) + minute(t))/60) + hour(t))/24;
+  //Serial.print("fractional day value : ");
+  //Serial.println(timeFracDay,7);
+  long unixDays = myUnixDate / 86400;
+  double JDN = julianUnixEpoch + unixDays;
+  JDN = JDN + timeFracDay;
+  JDN = JDN - ((double)timeZoneOffset / 24);
+  double JCN = (JDN - 2451545) / 36525;
+  double GMLS = (280.46646 + JCN * (36000.76983 + JCN * 0.0003032));
+  GMLS = GMLS - (360 * (floor(GMLS/360)) );
+  double GMAS = 357.52911 + (JCN * (35999.05029 - 0.0001537 * JCN));
+  double EEO = 0.016708634 - (JCN * (0.000042037 + 0.0000001267 * JCN));
+  double SEC = sin(GMAS * DEG_TO_RAD) * (1.914602 - (JCN * (0.004817 + 0.000014 * JCN))) + sin((2*GMAS)* DEG_TO_RAD)*(0.019993-0.000101*JCN) + sin((3*GMAS)* DEG_TO_RAD) * 0.000289;
+  double STL = GMLS + SEC;
+  double STA = GMAS + SEC;
+  double SRV = (1.000001018 * (1- EEO * EEO))/(1 + EEO * cos(STA * DEG_TO_RAD));
+  double SAL = STL - 0.00569 - (0.00478 * sin((125.04 - 1934.136 * JCN) * DEG_TO_RAD));
+  double MOE = 23 + (26 + (21.448-JCN * ( 46.815 + JCN * (0.00059 - JCN * 0.001813)))/60)/60;
+  double OC = MOE + 0.00256 * cos((125.04-1934.136*JCN)*DEG_TO_RAD);      
+  double SRA = (atan2(cos(OC * DEG_TO_RAD) * sin(SAL * DEG_TO_RAD), cos(SAL * DEG_TO_RAD))) * RAD_TO_DEG;
+  double SDec = (asin(sin(OC * DEG_TO_RAD) * sin(SAL * DEG_TO_RAD))) * RAD_TO_DEG;
+  double vy = tan((OC/2) * DEG_TO_RAD) * tan((OC/2) * DEG_TO_RAD);      
+  double EOT = 4 * ((vy * sin(2 * (GMLS * DEG_TO_RAD)) - 2 * EEO * sin(GMAS * DEG_TO_RAD) + 4 * EEO * vy * sin(GMAS * DEG_TO_RAD) * cos(2*(GMLS*DEG_TO_RAD)) - 0.5 * vy * vy * sin(4*(GMLS * DEG_TO_RAD)) - 1.25 * EEO * EEO * sin(2*(GMAS* DEG_TO_RAD))) * RAD_TO_DEG);
+  double HAS = acos((cos(90.833*DEG_TO_RAD)/(cos(lat*DEG_TO_RAD) * cos(SDec*DEG_TO_RAD))) - tan(lat * DEG_TO_RAD) * tan(SDec * DEG_TO_RAD)) * RAD_TO_DEG ;
+  double SolarNoon = (720 - 4 * lon - EOT) / 1440 ;
+  double Sunrise = SolarNoon - HAS * 4/1440;
+  Sunrise = unixDays + Sunrise;
+  Sunrise = Sunrise + ((double)timeZoneOffset / 24);
+  Sunrise = Sunrise * 86400;
+  Sunrise = Sunrise + 3600;   //ajout 1h heuure d'ete
+  Sunrise = (time_t)Sunrise;
+  *SunRiseTime = Sunrise; 
+
+  Serial.print("Sunrise time: ");
+  Serial.println(*SunRiseTime);
+  //printDateTime(*SunRiseTime);
+
+ double Sunset = SolarNoon + HAS * 4/1440;
+  Sunset = unixDays + Sunset;
+  Sunset = Sunset + ((double)timeZoneOffset / 24);
+  Sunset = Sunset * 86400;
+  Sunset = Sunset + 3600;      //ajout 1h heuure d'ete
+  Sunset = (time_t)Sunset;
+  *SunSetTime = Sunset;
+  Serial.print("Sunset time: ");Serial.println(*SunSetTime);
+  //printDateTime(*SunSetTime);  
+
+}
